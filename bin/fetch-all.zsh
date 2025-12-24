@@ -1,4 +1,5 @@
 #!/bin/zsh
+# Copyright (c) 2025 Gyu-min Lee. Licensed under the MIT License.
 
 PROJECT_ROOT=${0:a:h:h} 
 

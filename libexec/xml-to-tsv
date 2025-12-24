@@ -1,0 +1,65 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use utf8;
+use open qw(:std :utf8);
+
+# Set the "Input Record Separator" to the closing tag of an article.
+# This makes "<>" read chunks ending with </PubmedArticle> instead of \n.
+local $/ = "</PubmedArticle>"; 
+
+my $cnt = 1;
+
+while ( my $record = <> ) {
+  # Skip records that aren't actual articles (e.g. headers/footers)
+  next unless $record =~ /<PubmedArticle/;
+
+  my ($title, $abstract, $year);
+  my @authors;
+
+  # Use /s modifier (single line mode). 
+  # This allows the dot (.) to match newlines, handling multiline text.
+  
+  if ($record =~ /<ArticleTitle.*?>(.+?)<\/ArticleTitle>/s) {
+    $title = $1;
+  }
+  
+  # Handle Year (or MedlineDate if Year is missing)
+  if ($record =~ /<Year.*?>(.+?)<\/Year>/s) {
+    $year = $1;
+  }
+  
+  if ($record =~ /<AbstractText.*?>(.+?)<\/AbstractText>/s) {
+    $abstract = $1;
+  }
+
+  # Global match (/g) to catch ALL authors in the record
+  while ($record =~ /<Author.*?>.*?<LastName.*?>(.+?)<\/LastName>.*?<\/Author/sg) {
+    push @authors, $1;
+  }
+
+  # --- Formatting (Same as your logic) ---
+  my $author_str = join(", ", @authors);
+
+  my @fields = (
+    sanitize(sprintf("pubmed-dump-2025-%012d", $cnt)),
+    sanitize($author_str),
+    sanitize($year),
+    sanitize($title),
+    sanitize($abstract),
+  );
+  
+  print join("\t", @fields) . "\n";
+  $cnt++;
+}
+
+# Helper to sanitize fields
+sub sanitize {
+    my $val = shift // ""; # defined-or empty string
+    $val =~ s/^\s+|\s+$//g; # Trim surrounding whitespace
+    $val =~ s/\t/\\t/g;
+    $val =~ s/\n/\\n/g;
+    $val =~ s/\r/\\r/g;
+    $val =~ s/"/\\"/g;
+    return qq{"$val"};
+}

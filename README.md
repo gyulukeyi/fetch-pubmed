@@ -1,5 +1,9 @@
 # fetch-pubmed
 
+**NOTE**
+
+This is essentially a toy project for me learning _how-to-unix_ while learning ZSH and Perl. This script by no means would be the best or at least stable way to fetch metadata from PubMed's FTP. 
+
 A simple zsh script for fetching and parsing PubMed citation data from NCBI's FTP server. This tool downloads PubMed baseline XML files, extracts article metadata (title, abstract, year, authors), and converts them into tab-separated value (TSV) format for easy processing and analysis.
 
 ## Features

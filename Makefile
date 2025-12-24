@@ -53,5 +53,5 @@ clean:
 
 uninstall:
 	@rm -f $(BIN_DIR)/fetch-pubmed
-	@rm -rf $(LIB_DIR)
+	@rm -f $(LIB_DIR)/xml-to-tsv
 	@echo "Uninstalled."

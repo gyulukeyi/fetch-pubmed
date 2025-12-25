@@ -78,12 +78,18 @@ fetch_stream() {
     # Add a timestamp to the log for better debugging
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fetching: $fname..." >&2 
     
-    # Fetch with explicit error checking
+    # Fetch with explicit error checking and retry logic
     # -f: fail on HTTP errors (returns non-zero exit code for 4xx/5xx)
     # -S: show errors even in silent mode  
-    # --max-time: prevent hanging (5 minutes per file)
-    # --retry: retry on transient failures (3 retries with 5 second delay)
+    # --connect-timeout: timeout for initial connection (30 seconds)
+    # --max-time: prevent hanging (10 minutes per file, increased for large files)
+    # --retry: retry on transient failures (5 retries with exponential backoff)
+    # --retry-delay: initial delay between retries (2 seconds)
+    # --retry-max-time: maximum time to spend retrying (20 minutes total)
+    # --retry-connrefused: retry even on connection refused errors
     # --show-error: show error messages even with -s
+    # --speed-time: consider transfer stalled if speed below --speed-limit for this duration
+    # --speed-limit: minimum transfer speed in bytes/sec (1KB/s)
     #
     # Use a named pipe (FIFO) to stream while checking exit status
     local pipe=$(mktemp -u)
@@ -95,28 +101,74 @@ fetch_stream() {
       continue
     }
     
-    # Start curl in background, writing to pipe
-    # Note: stderr (errors) will be visible due to -S flag, stdout goes to pipe (for gunzip)
-    (curl -f -sS --max-time 300 --retry 3 --retry-delay 5 --show-error "$url" > "$pipe"; echo $? > "$exit_file") &
-    local curl_pid=$!
-    
-    # Stream through gunzip (this will block until curl finishes or pipe closes)
-    # Capture gunzip stderr to show errors if decompression fails
-    local gunzip_stderr=$(mktemp)
+    # Retry logic for specific error codes (18 = partial file, 23 = write error)
+    local max_attempts=3
+    local attempt=1
+    local curl_exit=1
     local gunzip_failed=0
-    if ! gunzip -c < "$pipe" 2> "$gunzip_stderr"; then
-      gunzip_failed=1
-      # Show gunzip errors if any
-      if [[ -s "$gunzip_stderr" ]]; then
-        echo "gunzip error for $fname:" >&2
-        cat "$gunzip_stderr" >&2
-      fi
-    fi
-    rm -f "$gunzip_stderr"
     
-    # Wait for curl and check its exit status
-    wait $curl_pid 2>/dev/null
-    local curl_exit=$(cat "$exit_file" 2>/dev/null || echo "1")
+    while [[ $attempt -le $max_attempts ]]; do
+      if [[ $attempt -gt 1 ]]; then
+        # Exponential backoff: 2^attempt seconds (2, 4, 8 seconds)
+        local backoff=$((2 ** attempt))
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Retry attempt $attempt/$max_attempts for $fname (waiting ${backoff}s)..." >&2
+        sleep $backoff
+      fi
+      
+      # Start curl in background, writing to pipe
+      # Note: stderr (errors) will be visible due to -S flag, stdout goes to pipe (for gunzip)
+      (curl -f -sS \
+        --connect-timeout 30 \
+        --max-time 600 \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-max-time 1200 \
+        --retry-connrefused \
+        --speed-time 60 \
+        --speed-limit 1024 \
+        --show-error \
+        "$url" > "$pipe" 2>&1; echo $? > "$exit_file") &
+      local curl_pid=$!
+      
+      # Stream through gunzip (this will block until curl finishes or pipe closes)
+      # Capture gunzip stderr to show errors if decompression fails
+      local gunzip_stderr=$(mktemp)
+      gunzip_failed=0
+      if ! gunzip -c < "$pipe" 2> "$gunzip_stderr"; then
+        gunzip_failed=1
+        # Show gunzip errors if any
+        if [[ -s "$gunzip_stderr" ]]; then
+          echo "gunzip error for $fname:" >&2
+          cat "$gunzip_stderr" >&2
+        fi
+      fi
+      rm -f "$gunzip_stderr"
+      
+      # Wait for curl and check its exit status
+      wait $curl_pid 2>/dev/null
+      curl_exit=$(cat "$exit_file" 2>/dev/null || echo "1")
+      
+      # Check if we should retry
+      # Exit codes to retry: 18 (partial file), 23 (write error), 28 (timeout), 35 (SSL connect error)
+      if [[ $curl_exit -eq 0 ]] && [[ $gunzip_failed -eq 0 ]]; then
+        # Success!
+        break
+      elif [[ $attempt -lt $max_attempts ]] && [[ $curl_exit -eq 18 || $curl_exit -eq 23 || $curl_exit -eq 28 || $curl_exit -eq 35 ]]; then
+        # Retry on specific error codes
+        echo "Error: curl exit code $curl_exit for $fname, will retry..." >&2
+        attempt=$((attempt + 1))
+        # Recreate pipe for next attempt
+        rm -f "$pipe" "$exit_file"
+        mkfifo "$pipe" 2>/dev/null || {
+          echo "Error: Failed to recreate pipe for $fname" >&2
+          break
+        }
+        continue
+      else
+        # Final failure or non-retryable error
+        break
+      fi
+    done
     
     # Cleanup pipes
     rm -f "$pipe" "$exit_file"
@@ -126,7 +178,14 @@ fetch_stream() {
       success_count=$((success_count + 1))
     else
       if [[ $curl_exit -ne 0 ]]; then
-        echo "Error: Failed to fetch $fname (curl exit code: $curl_exit)" >&2
+        echo "Error: Failed to fetch $fname after $attempt attempt(s) (curl exit code: $curl_exit)" >&2
+        # Provide helpful error messages for common exit codes
+        case $curl_exit in
+          18) echo "  -> Partial file transfer (connection interrupted)" >&2 ;;
+          23) echo "  -> Write error (possible pipe/filesystem issue)" >&2 ;;
+          28) echo "  -> Operation timeout" >&2 ;;
+          35) echo "  -> SSL/TLS connection error" >&2 ;;
+        esac
       fi
       if [[ $gunzip_failed -ne 0 ]]; then
         echo "Error: Failed to decompress $fname" >&2

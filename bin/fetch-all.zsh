@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Gyu-min Lee. Licensed under the MIT License.
 
 PROJECT_ROOT=${0:a:h:h} 
+LIB_DIR=${PROJECT_ROOT}/libexec/fetch-pubmed
 
 # Defaults
 START=1
@@ -55,8 +56,8 @@ for cmd in curl gunzip gsplit; do
 done
 
 # Check if xml-to-tsv exists and is executable
-if [[ ! -x "$PROJECT_ROOT/libexec/xml-to-tsv" ]]; then
-  echo "Error: xml-to-tsv script not found or not executable: $PROJECT_ROOT/libexec/xml-to-tsv" >&2
+if [[ ! -x "${LIB_DIR}/xml-to-tsv" ]]; then
+  echo "Error: xml-to-tsv script not found or not executable: ${LIB_DIR}/xml-to-tsv" >&2
   exit 1
 fi
 
@@ -142,7 +143,7 @@ echo "Processing PubMed${YEAR} files ${START} to ${END} into ${OUTPUT_DIR}/..." 
 
 PIPELINE_EXIT=0
 # Added -a 4 to gsplit to ensure 4-digit suffixes (0000-9999) and avoid the 9000 jump
-fetch_stream | "$PROJECT_ROOT/libexec/xml-to-tsv" | gsplit -l 100000 -d -a 4 --additional-suffix=.tsv - "${OUTPUT_DIR}/parsed_page_" || PIPELINE_EXIT=$?
+fetch_stream | "${LIB_DIR}/xml-to-tsv" | gsplit -l 100000 -d -a 4 --additional-suffix=.tsv - "${OUTPUT_DIR}/parsed_page_" || PIPELINE_EXIT=$?
 
 echo "" >&2
 if [[ -s "$FAILED_LOG" ]]; then

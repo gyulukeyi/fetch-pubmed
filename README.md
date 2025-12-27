@@ -114,7 +114,8 @@ fetch-pubmed/
 ├── bin/
 │   └── fetch-all.zsh      # Main fetching and processing script
 ├── libexec/
-│   └── xml-to-tsv          # Perl script for XML to TSV conversion
+│   └── fetch-pubmed/
+│       └── xml-to-tsv          # Perl script for XML to TSV conversion
 ├── Makefile                # Build and installation configuration
 └── README.md              # This file
 ```
